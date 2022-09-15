@@ -1,6 +1,10 @@
 import requests
 import json
 import pandas as pd
+from enforce_typing import enforce_types
+import json
+from typing import Any, Dict, List, Tuple
+import csv
 
 
 def get_block_number_from_timestamp(timestamp):
@@ -11,84 +15,8 @@ def get_block_number_from_timestamp(timestamp):
     return int(data["result"])
 
 
-# def get_global_statistics_polygon(from_timestamp, to_timestamp, interval):
-#     df_global_statistics = pd.DataFrame(
-#         columns=[
-#             "totalLiquidity.value",
-#             "totalLiquidity.token.address",
-#             "datatokenCount",
-#             "fixedCount",
-#             "nftCount",
-#             "poolCount",
-#             "block",
-#             "timestamp",
-#         ]
-#     )
-#     timestamp0 = 1653868800  # (GMT): Monday, May 30, 2022 12:00:00 AM
-#     timestamp1 = 1658534400  # (GMT): Saturday, July 23, 2022 12:00:00 AM
-
-#     base_url = "https://v4.subgraph.polygon.oceanprotocol.com"
-#     route = "/subgraphs/name/oceanprotocol/ocean-subgraph"
-#     url = base_url + route
-
-
-# for timestamp in range(timestamp0, timestamp1, 21600):  # 21600 / 3600 = 6 hours
-#     block_number = get_block_number_from_timestamp(timestamp)
-#     query = f"""
-#     {{
-#       globalStatistics (
-#         block: {{
-#           number: {block_number}
-#         }}
-#       )
-#       {{
-#         nftCount
-#         datatokenCount
-#         totalLiquidity {{
-#           value
-#           token {{
-#             address
-#           }}
-#         }}
-#         poolCount
-#         fixedCount
-#       }}
-#     }}
-#   """
-#     headers = {"Content-Type": "application/json"}
-#     payload = json.dumps({"query": query})
-#     response = requests.request("POST", url, headers=headers, data=payload)
-#     data = json.loads(response.text)
-
-#     df_data = pd.json_normalize(
-#         data["data"]["globalStatistics"],
-#         record_path=["totalLiquidity"],
-#         meta=["datatokenCount", "fixedCount", "nftCount", "poolCount"],
-#     )
-#     df_data.rename(
-#         {
-#             "value": "totalLiquidity.value",
-#             "token.address": "totalLiquidity.token.address",
-#         },
-#         axis=1,
-#         inplace=True,
-#     )
-
-#     df_data["block"] = block_number
-#     df_data["timestamp"] = timestamp
-#     time.sleep(0.25)
-
-#     df_global_statistics = pd.concat(
-#         [df_global_statistics, df_data], ignore_index=True, sort=False
-#     )
-
-import json
-from typing import Any, Dict, List, Tuple
-import networkutil
-
-
 def submitQuery(query: str, chainID: int) -> dict:
-    subgraph_url = networkutil.chainIdToSubgraphUri(chainID)
+    subgraph_url = chainIdToSubgraphUri(chainID)
     request = requests.post(subgraph_url, "", json={"query": query})
     if request.status_code != 200:
         raise Exception(f"Query failed. Return code is {request.status_code}\n{query}")
@@ -104,6 +32,7 @@ class DataNFT:
         nft_addr: str,
         chain_id: int,
         _symbol: str,
+        name: str,
         basetoken_addr: str,
         volume: float,
     ):
@@ -111,11 +40,18 @@ class DataNFT:
         # self.did = oceanutil.calcDID(nft_addr, chain_id)
         self.chain_id = chain_id
         self.symbol = _symbol
+        self.name = name
         self.basetoken_addr = basetoken_addr
         self.volume = volume
 
     def __repr__(self):
-        return f"{self.nft_addr} {self.chain_id} {self.symbol}"# {self.symbol}"
+        return f"{self.nft_addr} {self.chain_id} {self.symbol} {self.name}"
+
+
+# class Datatoken:
+#     def __init__(self, datatoken_addr: str, chain_id: int, _symbol: str):
+#         self.datatoken_addr = datatoken_addr
+#         self.chain_id = chain_id
 
 
 def getNFTVolumes(
@@ -147,6 +83,8 @@ def getNFTVolumes(
               symbol
               nft {
                 id
+                name
+                symbol
               }
             },
             lastPriceToken,
@@ -186,8 +124,11 @@ def getNFTVolumes(
             if not nft_addr in NFTinfo_tmp[basetoken_addr]:
                 NFTinfo_tmp[basetoken_addr][nft_addr] = {}
 
-            NFTinfo_tmp[basetoken_addr][nft_addr]["symbol"] = order["datatoken"][
+            NFTinfo_tmp[basetoken_addr][nft_addr]["symbol"] = order["datatoken"]["nft"][
                 "symbol"
+            ]
+            NFTinfo_tmp[basetoken_addr][nft_addr]["name"] = order["datatoken"]["nft"][
+                "name"
             ]
 
     for base_addr in NFTinfo_tmp:
@@ -196,6 +137,7 @@ def getNFTVolumes(
                 nft_addr,
                 chainID,
                 NFTinfo_tmp[base_addr][nft_addr]["symbol"],
+                NFTinfo_tmp[base_addr][nft_addr]["name"],
                 base_addr,
                 NFTvols[base_addr][nft_addr],
             )
@@ -203,3 +145,64 @@ def getNFTVolumes(
 
     print("getVolumes(): done")
     return NFTvols, NFTinfo
+
+
+_CHAINID_TO_NETWORK = {
+    8996: "development",  # ganache
+    1: "mainnet",
+    3: "ropsten",
+    4: "rinkeby",
+    56: "bsc",
+    137: "polygon",
+    246: "energyweb",
+    1287: "moonbase",
+    1285: "moonriver",
+    80001: "mumbai",
+}
+
+
+@enforce_types
+def chainIdToSubgraphUri(chainID: int) -> str:
+    """Returns the subgraph URI for a given chainID"""
+    sg = "/subgraphs/name/oceanprotocol/ocean-subgraph"
+    # if chainID == DEV_CHAINID:
+    #     return "http://127.0.0.1:9000" + sg
+
+    network_str = chainIdToNetwork(chainID)
+    return f"https://v4.subgraph.{network_str}.oceanprotocol.com" + sg
+
+
+@enforce_types
+def chainIdToNetwork(chainID: int) -> str:
+    """Returns the network name for a given chainID"""
+    return _CHAINID_TO_NETWORK[chainID]
+
+
+@enforce_types
+def saveNFTvolsCsv(nftvols_at_chain: dict, csv_file: str, chainID: int):
+    """
+    @description
+      Save the nftvols csv for this chain. This csv is a key input for
+      dftool calcrewards, and contains just enough info for it to operate, and no more.
+
+    @arguments
+      nftvols_at_chain -- dict of [basetoken_addr][nft_addr] : vol_amt
+      csv_dir -- directory that holds csv files
+      chainID -- which network
+    """
+    # assert os.path.exists(csv_dir), csv_dir
+    # csv_file = nftvolsCsvFilename(csv_dir, chainID)
+    # assert not os.path.exists(csv_file), csv_file
+    V = nftvols_at_chain
+    with open(csv_file, "w") as f:
+        writer = csv.writer(f)
+        writer.writerow(
+            ["chain_id", "basetoken_address", "nft_address", "volume_amount"]
+        )
+        for basetoken_addr in V.keys():
+            # assertIsEthAddr(basetoken_addr)
+            for nft_addr, vol in V[basetoken_addr].items():
+                # assertIsEthAddr(nft_addr)
+                row = [chainID, basetoken_addr.lower(), nft_addr.lower(), vol]
+                writer.writerow(row)
+    print(f"Created {csv_file}")
