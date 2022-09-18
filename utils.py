@@ -1,3 +1,5 @@
+from asyncore import write
+from itertools import chain
 import requests
 import json
 import pandas as pd
@@ -5,10 +7,31 @@ from enforce_typing import enforce_types
 import json
 from typing import Any, Dict, List, Tuple
 import csv
+from datetime import datetime  # , timezone
+import numpy as np
 
 
-def get_block_number_from_timestamp(timestamp):
-    url = f"https://api.polygonscan.com/api?module=block&action=getblocknobytime&timestamp={timestamp}&closest=before&apikey=TPM27R128ZBPXS9QEJKWQJ9S6BYTCJ8EB4"
+def get_current_timestamp():
+    current_datetime = datetime.now()
+    current_timestamp = int(
+        datetime(
+            year=current_datetime.year,
+            month=current_datetime.month,
+            day=current_datetime.day,
+            hour=current_datetime.hour,
+            minute=current_datetime.minute,
+            second=current_datetime.second,
+            microsecond=0,
+            # tzinfo=timezone.utc
+        ).timestamp()
+    )
+
+    return current_timestamp
+
+
+def get_block_number_from_timestamp(timestamp, chainID):
+    if chainID == 137:
+        url = f"https://api.polygonscan.com/api?module=block&action=getblocknobytime&timestamp={timestamp}&closest=before&apikey=TPM27R128ZBPXS9QEJKWQJ9S6BYTCJ8EB4"
     headers = {"Content-Type": "application/json"}
     responses = requests.request("POST", url, headers=headers)
     data = json.loads(responses.text)
@@ -160,6 +183,10 @@ _CHAINID_TO_NETWORK = {
     80001: "mumbai",
 }
 
+# _CHAINID_TO_API_URL = {
+#     137:
+# }
+
 
 @enforce_types
 def chainIdToSubgraphUri(chainID: int) -> str:
@@ -190,19 +217,41 @@ def saveNFTvolsCsv(nftvols_at_chain: dict, csv_file: str, chainID: int):
       csv_dir -- directory that holds csv files
       chainID -- which network
     """
-    # assert os.path.exists(csv_dir), csv_dir
-    # csv_file = nftvolsCsvFilename(csv_dir, chainID)
-    # assert not os.path.exists(csv_file), csv_file
     V = nftvols_at_chain
-    with open(csv_file, "w") as f:
+    # with open(csv_file, "w") as f:  # write for 1st time querying
+    with open(csv_file, "a") as f:  # append when 1st data available
         writer = csv.writer(f)
-        writer.writerow(
-            ["chain_id", "basetoken_address", "nft_address", "volume_amount"]
-        )
-        for basetoken_addr in V.keys():
-            # assertIsEthAddr(basetoken_addr)
-            for nft_addr, vol in V[basetoken_addr].items():
-                # assertIsEthAddr(nft_addr)
-                row = [chainID, basetoken_addr.lower(), nft_addr.lower(), vol]
-                writer.writerow(row)
-    print(f"Created {csv_file}")
+        # writer.writerow(  # only first time
+        #     [
+        #         "chain_id",
+        #         "basetoken_address",
+        #         "nft_address",
+        #         "volume_amount",
+        #         "timestamp",
+        #     ]
+        # )
+        current_timestamp = get_current_timestamp()
+        if V == {}:
+            row = [
+                chainID,
+                np.NAN,
+                np.NAN,
+                np.NAN,
+                current_timestamp,
+            ]
+            writer.writerow(row)
+        else:
+            for basetoken_addr in V.keys():
+                # assertIsEthAddr(basetoken_addr)
+                for nft_addr, vol in V[basetoken_addr].items():
+                    # assertIsEthAddr(nft_addr)
+                    row = [
+                        chainID,
+                        basetoken_addr.lower(),
+                        nft_addr.lower(),
+                        vol,
+                        current_timestamp,
+                        # 1661965200,
+                    ]
+                    writer.writerow(row)
+    print(f"Updated {csv_file}")
